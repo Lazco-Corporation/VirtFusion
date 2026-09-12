@@ -4,56 +4,69 @@ on:
   push:
     branches:
     - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check:
-    name: Check commit message
+    name: Check release trigger
     runs-on: ubuntu-24.04
     outputs:
-      commit_message: ${{ steps.check_commit_message.outputs.commit_message }}
+      should_publish: ${{ steps.decide.outputs.should_publish }}
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
-    - name: Check commit message
-      id: check_commit_message
+    - name: Decide whether to publish
+      id: decide
+      env:
+        EVENT_NAME: ${{ github.event_name }}
       run: |
-        commit_message=$(git log --format=%B -n 1 ${{ github.sha }})
-        if [[ $commit_message =~ ^[0-9]+\.[0-9]+\.[0-9] ]]; then
-          echo "Commit message matches version format."
-          echo "commit_message=$commit_message" >> "$GITHUB_OUTPUT"
-        else
-          echo "Commit message does not match version format. Skipping release."
+        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          echo "Manual trigger. Publishing."
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          exit 0
         fi
 
-  build-and-publish:
-      name: Build and publish npm package
-      needs: [check]
-      if: ${{ needs.check.outputs.commit_message != '' }}
-      runs-on: ubuntu-24.04
-      permissions: write-all
+        commit_message=$(git log --format=%B -n 1 HEAD)
+        if [[ $commit_message =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+          echo "Commit message is a version. Publishing."
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Commit message is not a version. Skipping release."
+          echo "should_publish=false" >> "$GITHUB_OUTPUT"
+        fi
 
-      steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  publish:
+    name: Build and publish npm package
+    needs: [check]
+    if: needs.check.outputs.should_publish == 'true'
+    runs-on: ubuntu-24.04
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "pnpm"
+    - name: Install pnpm
+      uses: pnpm/action-setup@v6
 
-      - name: Install dependencies
-        run: pnpm install
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        cache: "pnpm"
+        registry-url: "https://registry.npmjs.org"
 
-      - name: Build
-        run: pnpm build
+    - name: Install dependencies
+      run: pnpm install
 
-      - name: Publish to NPM
-        uses: JS-DevTools/npm-publish@v3
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
+    - name: Build
+      run: pnpm build
+
+    - name: Publish to npm
+      run: npm publish --access public
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
