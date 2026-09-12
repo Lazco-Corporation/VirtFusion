@@ -23,7 +23,10 @@
     "async",
     "promise"
   ],
-  "author": "Lazco Corporation (拉資科科技有限公司)",
+  "author": {
+    "name": "Lazco Corporation (拉資科科技有限公司)",
+    "url": "https://github.com/Lazco-Corporation"
+  },
   "license": "AGPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/Lazco-Corporation/VirtFusion/issues"
