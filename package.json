@@ -23,8 +23,8 @@
     "async",
     "promise"
   ],
-  "author": "Alex Liao, Lazco Studio LTD.",
-  "license": "GPL-3.0",
+  "author": "Lazco Corporation (拉資科科技有限公司)",
+  "license": "AGPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/Lazco-Studio/VirtFusion/issues"
   },
