@@ -25,8 +25,16 @@ jobs:
       env:
         EVENT_NAME: ${{ github.event_name }}
       run: |
+        # workflow_dispatch runs against the ref the operator picks, and
+        # actions/checkout follows that ref. Without this guard a manual run on
+        # any branch or tag would publish its contents to npm.
+        if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+          echo "::error::Releases run from main only. This run used $GITHUB_REF."
+          exit 1
+        fi
+
         if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-          echo "Manual trigger. Publishing."
+          echo "Manual trigger on main. Publishing."
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
