@@ -9,3 +9,6 @@
 
 # Environment Variable Files
 .env
+
+# Git worktrees
+/.worktrees/
