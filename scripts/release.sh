@@ -75,7 +75,16 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 git fetch --tags --quiet origin
-if [ -n "$(git rev-list "@{u}..HEAD")" ] || [ -n "$(git rev-list "HEAD..@{u}")" ]; then
+
+# Compare against origin/main by name, not @{u}. With no upstream set, @{u}
+# fails inside the command substitution below, the test reads an empty string,
+# and the guard passes a diverged branch.
+if ! git rev-parse --verify --quiet "refs/remotes/origin/${BRANCH}" > /dev/null; then
+  echo "origin/${BRANCH} not found. Push the branch first." >&2
+  exit 1
+fi
+
+if [ -n "$(git rev-list "origin/${BRANCH}..HEAD")" ] || [ -n "$(git rev-list "HEAD..origin/${BRANCH}")" ]; then
   echo "Local ${BRANCH} and origin/${BRANCH} have diverged. Pull or push first." >&2
   exit 1
 fi
@@ -97,7 +106,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "  Commit  : $(git rev-parse --short HEAD) (${BRANCH})"
   echo
   echo "[dry-run] pnpm version ${BUMP} --message 'release %s'"
-  echo "[dry-run] git push origin ${BRANCH} v<new-version>"
+  echo "[dry-run] git push --atomic origin ${BRANCH} v<new-version>"
   exit 0
 fi
 
@@ -128,8 +137,23 @@ NEXT="$(node -p "require('./package.json').version")"
 TAG="v${NEXT}"
 
 # npm versions are immutable, so a duplicate would burn the whole release.
-if npm view "${PKG_NAME}@${NEXT}" version > /dev/null 2>&1; then
+# A non-zero exit alone does not prove the version is free: a timeout, an auth
+# failure, or a registry outage exits non-zero too. Only E404 means "not there".
+set +e
+VIEW_OUT="$(npm view "${PKG_NAME}@${NEXT}" version 2>&1)"
+VIEW_RC=$?
+set -e
+
+if [ "$VIEW_RC" -eq 0 ]; then
   echo "${PKG_NAME}@${NEXT} is already on the npm registry." >&2
+  undo
+  echo "Rolled back the local commit and tag ${TAG}. Nothing was pushed." >&2
+  exit 1
+fi
+
+if ! printf '%s' "$VIEW_OUT" | grep -q 'E404'; then
+  echo "Cannot check ${PKG_NAME}@${NEXT} on the npm registry:" >&2
+  printf '%s\n' "$VIEW_OUT" >&2
   undo
   echo "Rolled back the local commit and tag ${TAG}. Nothing was pushed." >&2
   exit 1
@@ -148,7 +172,9 @@ echo "  Dist-tag : ${DIST_TAG}"
 echo "  Commit   : $(git rev-parse --short HEAD) (${BRANCH})"
 echo
 
-if ! git push origin "$BRANCH" "$TAG"; then
+# --atomic, so a rejected tag cannot leave the release commit on origin. undo
+# resets local refs only, and it cannot take back a ref that already landed.
+if ! git push --atomic origin "$BRANCH" "$TAG"; then
   undo
   echo "Rolled back the local commit and tag ${TAG}. Nothing was pushed." >&2
   exit 1

@@ -10,6 +10,10 @@
 # A prerelease version (v1.0.0-beta.1) goes to the `next` dist-tag, never
 # `latest`. npm-publish also refuses `latest` for a prerelease on its own.
 #
+# A tag can point at any commit, including one that never reached main, so the
+# job refuses a tag whose commit is not contained in origin/main. Releases run
+# from main only.
+#
 # ── SHARED ACTIONS (ci-actions) ────────────────────────────────────────────
 # infisical-fetch and npm-publish come from Lazco-Corporation/ci-actions@v1.
 # Log and output format is defined there. npm-publish version-gates, skips a
@@ -47,6 +51,19 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0 # merge-base needs the history behind main
+
+    - name: Refuse a tag that is not on main
+      env:
+        TAG_SHA: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        git fetch --quiet origin main
+        if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+          echo "::error::Tag ${GITHUB_REF_NAME} points at ${TAG_SHA}, which is not on main. Releases run from main only."
+          exit 1
+        fi
 
     - name: Install pnpm
       uses: pnpm/action-setup@v6
@@ -80,14 +97,21 @@ jobs:
         dist-tag: ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
         package-manager: pnpm
 
+    # `already-published` counts too. When a previous run published to npm and
+    # then failed here, npm-publish skips the version on the retry, and the
+    # GitHub release would never appear.
     - name: Create the GitHub release
-      if: steps.publish.outputs.result == 'published'
+      if: steps.publish.outputs.result == 'published' || steps.publish.outputs.result == 'already-published'
       env:
         GH_TOKEN: ${{ github.token }}
         TAG: ${{ github.ref_name }}
         PRERELEASE: ${{ contains(github.ref_name, '-') }}
       run: |
         set -euo pipefail
+        if gh release view "$TAG" > /dev/null 2>&1; then
+          echo "Release $TAG already exists. Nothing to do."
+          exit 0
+        fi
         args=(--generate-notes --title "$TAG")
         if [ "$PRERELEASE" = "true" ]; then
           args+=(--prerelease)
