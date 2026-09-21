@@ -1,3 +1,21 @@
+# Publish @lazco/virtfusion to npm.
+#
+# ── SHARED ACTIONS (ci-actions) ────────────────────────────────────────────
+# infisical-fetch and npm-publish come from Lazco-Corporation/ci-actions@v1.
+# Log and output format is defined there. npm-publish version-gates, skips a
+# version that is already on the registry, signs with provenance, and verifies
+# the dist-tag.
+#
+# ── CONFIG SOURCED FROM INFISICAL ──────────────────────────────────────────
+#   Project: lazco-virtfusion   Path: /ci   Env-slug: prod
+#   NPM_TOKEN   npm automation token with publish rights on @lazco
+#
+# The only GitHub-native config is the OIDC bootstrap:
+#   vars.INFISICAL_CI_IDENTITY_ID   Infisical machine-identity id
+#
+# The job runs on a GitHub-hosted runner on purpose. Blacksmith is for heavy
+# CPU or a warm disk cache, which an npm publish does not need.
+
 name: Publish to NPM
 
 on:
@@ -53,6 +71,9 @@ jobs:
     needs: [check]
     if: needs.check.outputs.should_publish == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # npm provenance + Infisical OIDC
 
     steps:
     - name: Checkout code
@@ -66,7 +87,6 @@ jobs:
       with:
         node-version: "24"
         cache: "pnpm"
-        registry-url: "https://registry.npmjs.org"
 
     - name: Install dependencies
       run: pnpm install
@@ -74,7 +94,17 @@ jobs:
     - name: Build
       run: pnpm build
 
+    - name: Fetch CI config from Infisical
+      uses: Lazco-Corporation/ci-actions/infisical-fetch@v1
+      with:
+        project-slug: lazco-virtfusion
+        env-slug: prod
+        identity-id: ${{ vars.INFISICAL_CI_IDENTITY_ID }}
+        required-keys: NPM_TOKEN
+
     - name: Publish to npm
-      run: npm publish --access public
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      uses: Lazco-Corporation/ci-actions/npm-publish@v1
+      with:
+        token: ${{ env.NPM_TOKEN }}
+        dist-tag: latest
+        package-manager: pnpm
