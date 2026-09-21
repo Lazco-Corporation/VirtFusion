@@ -1,4 +1,14 @@
-# Publish @lazco/virtfusion to npm.
+# Tag-driven npm release.
+#
+# Tag grammar: v<version>   e.g. v0.9.0, v1.0.0-beta.1
+#
+# The tag is created by `scripts/release.sh`, which runs `pnpm version`. That
+# command writes package.json, commits, and tags in one step, so the tag and
+# package.json always agree. This workflow re-checks that agreement anyway:
+# npm-publish fails when `expected-version` and package.json disagree.
+#
+# A prerelease version (v1.0.0-beta.1) goes to the `next` dist-tag, never
+# `latest`. npm-publish also refuses `latest` for a prerelease on its own.
 #
 # ── SHARED ACTIONS (ci-actions) ────────────────────────────────────────────
 # infisical-fetch and npm-publish come from Lazco-Corporation/ci-actions@v1.
@@ -16,63 +26,22 @@
 # The job runs on a GitHub-hosted runner on purpose. Blacksmith is for heavy
 # CPU or a warm disk cache, which an npm publish does not need.
 
-name: Publish to NPM
+name: Release (npm)
 
 on:
   push:
-    branches:
-    - main
-  workflow_dispatch:
+    tags:
+    - "v*"
 
 permissions:
   contents: read
 
 jobs:
-  check:
-    name: Check release trigger
-    runs-on: ubuntu-24.04
-    outputs:
-      should_publish: ${{ steps.decide.outputs.should_publish }}
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
-
-    - name: Decide whether to publish
-      id: decide
-      env:
-        EVENT_NAME: ${{ github.event_name }}
-      run: |
-        # workflow_dispatch runs against the ref the operator picks, and
-        # actions/checkout follows that ref. Without this guard a manual run on
-        # any branch or tag would publish its contents to npm.
-        if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
-          echo "::error::Releases run from main only. This run used $GITHUB_REF."
-          exit 1
-        fi
-
-        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-          echo "Manual trigger on main. Publishing."
-          echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        commit_message=$(git log --format=%B -n 1 HEAD)
-        if [[ $commit_message =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-          echo "Commit message is a version. Publishing."
-          echo "should_publish=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "Commit message is not a version. Skipping release."
-          echo "should_publish=false" >> "$GITHUB_OUTPUT"
-        fi
-
   publish:
-    name: Build and publish npm package
-    needs: [check]
-    if: needs.check.outputs.should_publish == 'true'
+    name: Publish to npm
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write # the last step creates the GitHub release
       id-token: write # npm provenance + Infisical OIDC
 
     steps:
@@ -103,8 +72,24 @@ jobs:
         required-keys: NPM_TOKEN
 
     - name: Publish to npm
+      id: publish
       uses: Lazco-Corporation/ci-actions/npm-publish@v1
       with:
         token: ${{ env.NPM_TOKEN }}
-        dist-tag: latest
+        expected-version: ${{ github.ref_name }}
+        dist-tag: ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
         package-manager: pnpm
+
+    - name: Create the GitHub release
+      if: steps.publish.outputs.result == 'published'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+        PRERELEASE: ${{ contains(github.ref_name, '-') }}
+      run: |
+        set -euo pipefail
+        args=(--generate-notes --title "$TAG")
+        if [ "$PRERELEASE" = "true" ]; then
+          args+=(--prerelease)
+        fi
+        gh release create "$TAG" "${args[@]}"
