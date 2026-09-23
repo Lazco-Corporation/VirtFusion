@@ -11,8 +11,8 @@
 # `latest`. npm-publish also refuses `latest` for a prerelease on its own.
 #
 # A tag can point at any commit, including one that never reached main, so the
-# job refuses a tag whose commit is not contained in origin/main. Releases run
-# from main only.
+# job refuses a tag that main does not hold. Releases run from main only.
+# cloud-backend shipped a prod tag that way, from a commit no branch held.
 #
 # ── SHARED ACTIONS (ci-actions) ────────────────────────────────────────────
 # infisical-fetch and npm-publish come from Lazco-Corporation/ci-actions@v1.
@@ -49,21 +49,18 @@ jobs:
       id-token: write # npm provenance + Infisical OIDC
 
     steps:
+    # Before the checkout, so nothing is fetched when this refuses. The action
+    # reads the compare API, so it needs no history and no fetch-depth.
+    - name: Refuse a tag that is not on main
+      uses: Lazco-Corporation/ci-actions/require-tag-on-main@v1
+      with:
+        repository: ${{ github.repository }}
+        sha: ${{ github.sha }}
+        ref-name: ${{ github.ref_name }}
+        token: ${{ github.token }}
+
     - name: Checkout code
       uses: actions/checkout@v7
-      with:
-        fetch-depth: 0 # merge-base needs the history behind main
-
-    - name: Refuse a tag that is not on main
-      env:
-        TAG_SHA: ${{ github.sha }}
-      run: |
-        set -euo pipefail
-        git fetch --quiet origin main
-        if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
-          echo "::error::Tag ${GITHUB_REF_NAME} points at ${TAG_SHA}, which is not on main. Releases run from main only."
-          exit 1
-        fi
 
     - name: Install pnpm
       uses: pnpm/action-setup@v6
