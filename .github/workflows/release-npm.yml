@@ -1,0 +1,116 @@
+# Tag-driven npm release.
+#
+# Tag grammar: v<version>   e.g. v0.9.0, v1.0.0-beta.1
+#
+# The tag is created by `scripts/release.sh`, which runs `pnpm version`. That
+# command writes package.json, commits, and tags in one step, so the tag and
+# package.json always agree. This workflow re-checks that agreement anyway:
+# npm-publish fails when `expected-version` and package.json disagree.
+#
+# A prerelease version (v1.0.0-beta.1) goes to the `next` dist-tag, never
+# `latest`. npm-publish also refuses `latest` for a prerelease on its own.
+#
+# A tag can point at any commit, including one that never reached main, so the
+# job refuses a tag that main does not hold. Releases run from main only.
+# cloud-backend shipped a prod tag that way, from a commit no branch held.
+#
+# ── SHARED ACTIONS (ci-actions) ────────────────────────────────────────────
+# infisical-fetch and npm-publish come from Lazco-Corporation/ci-actions@v1.
+# Log and output format is defined there. npm-publish version-gates, skips a
+# version that is already on the registry, signs with provenance, and verifies
+# the dist-tag.
+#
+# ── CONFIG SOURCED FROM INFISICAL ──────────────────────────────────────────
+#   Project: lazco-virtfusion   Path: /ci   Env-slug: prod
+#   NPM_TOKEN   npm automation token with publish rights on @lazco
+#
+# The only GitHub-native config is the OIDC bootstrap:
+#   vars.INFISICAL_CI_IDENTITY_ID   Infisical machine-identity id
+#
+# The job runs on a GitHub-hosted runner on purpose. Blacksmith is for heavy
+# CPU or a warm disk cache, which an npm publish does not need.
+
+name: Release (npm)
+
+on:
+  push:
+    tags:
+    - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # the last step creates the GitHub release
+      id-token: write # npm provenance + Infisical OIDC
+
+    steps:
+    # Before the checkout, so nothing is fetched when this refuses. The action
+    # reads the compare API, so it needs no history and no fetch-depth.
+    - name: Refuse a tag that is not on main
+      uses: Lazco-Corporation/ci-actions/require-tag-on-main@v1
+      with:
+        repository: ${{ github.repository }}
+        sha: ${{ github.sha }}
+        ref-name: ${{ github.ref_name }}
+        token: ${{ github.token }}
+
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v6
+
+    - name: Setup Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: "24"
+        cache: "pnpm"
+
+    - name: Install dependencies
+      run: pnpm install
+
+    - name: Build
+      run: pnpm build
+
+    - name: Fetch CI config from Infisical
+      uses: Lazco-Corporation/ci-actions/infisical-fetch@v1
+      with:
+        project-slug: lazco-virtfusion
+        env-slug: prod
+        identity-id: ${{ vars.INFISICAL_CI_IDENTITY_ID }}
+        required-keys: NPM_TOKEN
+
+    - name: Publish to npm
+      id: publish
+      uses: Lazco-Corporation/ci-actions/npm-publish@v1
+      with:
+        token: ${{ env.NPM_TOKEN }}
+        expected-version: ${{ github.ref_name }}
+        dist-tag: ${{ contains(github.ref_name, '-') && 'next' || 'latest' }}
+        package-manager: pnpm
+
+    # `already-published` counts too. When a previous run published to npm and
+    # then failed here, npm-publish skips the version on the retry, and the
+    # GitHub release would never appear.
+    - name: Create the GitHub release
+      if: steps.publish.outputs.result == 'published' || steps.publish.outputs.result == 'already-published'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.ref_name }}
+        PRERELEASE: ${{ contains(github.ref_name, '-') }}
+      run: |
+        set -euo pipefail
+        if gh release view "$TAG" > /dev/null 2>&1; then
+          echo "Release $TAG already exists. Nothing to do."
+          exit 0
+        fi
+        args=(--generate-notes --title "$TAG")
+        if [ "$PRERELEASE" = "true" ]; then
+          args+=(--prerelease)
+        fi
+        gh release create "$TAG" "${args[@]}"
