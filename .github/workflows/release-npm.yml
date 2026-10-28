@@ -27,8 +27,9 @@
 # The only GitHub-native config is the OIDC bootstrap:
 #   vars.INFISICAL_CI_IDENTITY_ID   Infisical machine-identity id
 #
-# The job runs on a GitHub-hosted runner on purpose. Blacksmith is for heavy
-# CPU or a warm disk cache, which an npm publish does not need.
+# The job runs on a GitHub-hosted runner on purpose. This repo is public, Boat
+# refuses the jobs of a public repo, and npm provenance needs a GitHub-hosted
+# runner.
 
 name: Release (npm)
 
