@@ -27,9 +27,8 @@
 # The only GitHub-native config is the OIDC bootstrap:
 #   vars.INFISICAL_CI_IDENTITY_ID   Infisical machine-identity id
 #
-# The job runs on a GitHub-hosted runner on purpose. This repo is public, Boat
-# refuses the jobs of a public repo, and npm provenance needs a GitHub-hosted
-# runner.
+# The job runs on a GitHub-hosted runner, because npm provenance needs one.
+# This repo is public, so that runner is free.
 
 name: Release (npm)
 
